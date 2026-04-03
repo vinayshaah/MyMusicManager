@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Echo Demo</title>
+</head>
+<body>
+  <h1>Echo Demo</h1>
+  <h2>Echo</h2>
+  <input id="textInput" type="text" placeholder="Type something...">
+  <button id="sendBtn">Send</button>
+  <hr>
+  <h2>Scan Hindi films by year</h2>
+  <input id="yearInput" type="text" placeholder="Enter year (e.g. 2020)">
+  <button id="scanBtn">Scan</button>
+  <div id="scanResult" style="margin-top:1rem; font-weight:bold;"></div>
+  <div id="movieList" style="margin-top:1rem; border:1px solid #ccc; padding:1rem; max-height:400px; overflow-y:auto; display:none;">
+    <h3>Movies Found:</h3>
+    <ul id="movies" style="list-style-type:none; padding:0;"></ul>
+  </div>
+  <div id="result" style="margin-top:1rem; font-weight:bold;"></div>
+
+  <script>
+    const btn = document.getElementById('sendBtn');
+    const input = document.getElementById('textInput');
+    const result = document.getElementById('result');
+
+    btn.addEventListener('click', () => {
+      const val = encodeURIComponent(input.value || '');
+      fetch('/echo?input=' + val)
+        .then(r => r.text())
+        .then(txt => { result.textContent = txt; })
+        .catch(err => { result.textContent = 'Error: ' + err; });
+    });
+
+    const scanBtn = document.getElementById('scanBtn');
+    const yearInput = document.getElementById('yearInput');
+    const scanResult = document.getElementById('scanResult');
+    scanBtn.addEventListener('click', () => {
+      const year = encodeURIComponent(yearInput.value || '');
+      if (!year) { scanResult.textContent = 'Please enter a year.'; return; }
+      scanResult.textContent = 'Scanning... this may take a while.';
+      fetch('/scan?year=' + year)
+        .then(r => r.json())
+        .then(data => {
+          scanResult.textContent = data.status + ' - Found ' + data.count + ' movies.';
+          const movieList = document.getElementById('movieList');
+          const movieUl = document.getElementById('movies');
+          movieUl.innerHTML = '';
+          if (data.moviesFound && data.moviesFound.length > 0) {
+            data.moviesFound.forEach(movie => {
+              const li = document.createElement('li');
+              li.style.padding = '0.5rem';
+              li.style.borderBottom = '1px solid #eee';
+              const a = document.createElement('a');
+              a.href = movie.url;
+              a.target = '_blank';
+              a.textContent = movie.title;
+              a.style.fontWeight = 'bold';
+              const urlDiv = document.createElement('div');
+              urlDiv.style.fontSize = '0.85rem';
+              urlDiv.style.color = '#555';
+              urlDiv.textContent = movie.url;
+              li.appendChild(a);
+              li.appendChild(urlDiv);
+              movieUl.appendChild(li);
+            });
+            movieList.style.display = 'block';
+          } else {
+            movieList.style.display = 'none';
+          }
+        })
+        .catch(err => { scanResult.textContent = 'Error: ' + err; });
+    });
+  </script>
+</body>
+</html>
