@@ -6,6 +6,7 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -21,6 +22,9 @@ public class WikiScraperService {
 
     private static final Logger logger = LoggerFactory.getLogger(WikiScraperService.class);
     private boolean needHeader = true;
+
+    @Autowired
+    private GeminiSongExtractorService geminiExtractor;
 
     public List<Map<String, String>> scrapeMovies(String url) {
         List<Map<String, String>> movies = new ArrayList<>();
@@ -65,6 +69,7 @@ public class WikiScraperService {
 
     /**
      * Scrape songs from a given movie Wikipedia page.
+     * Uses Jsoup for initial extraction, falls back to Gemini AI if any song data is incomplete.
      * @param movieUrl  
      */
     public void scrapeSongsFromMovie(String movieUrl) {
@@ -77,52 +82,89 @@ public class WikiScraperService {
 
             // Connect to the specific movie page
             Document doc = Jsoup.connect(movieUrl).userAgent("Mozilla/5.0").get();
+            
             // 1. Locate the Soundtrack section in the Wikipedia page
             Element soundtrackHeader = getSoundtrackHeader(doc);
             Element trackHeader = retrieveTrackHeader(doc);
-            // Check for 'Track listing' section.
             Element trackTable = doc.select("table.tracklist").first();
-            //if the wikipedia page has a soundtrack and track listing section.
-            if(trackTable != null && soundtrackHeader != null) {
-                getFromTrackListing(movieUrl, f, trackTable);
             
-            }
-            else if (soundtrackHeader != null) {
-                // 3. Find the first table that appears after this header
+            List<Map<String, String>> finalSongs = new ArrayList<>();
+            String sourceMethod = "None";
+            
+            // Try to extract songs using Jsoup
+            if (trackTable != null && soundtrackHeader != null) {
+                finalSongs = extractFromTrackListing(movieUrl, trackTable);
+                sourceMethod = "Track Listing";
+            } else if (soundtrackHeader != null) {
                 Element songTable = soundtrackHeader.parent().nextElementSiblings()
                                     .select("table.wikitable").first();
-
-                try (FileWriter fw = new FileWriter(f, true)) {
-                    if (needHeader) {
-                        fw.write("movieUrl,title,singers,composer,lyricists,length,source" + System.lineSeparator());
-                        this.needHeader = false;
-                    }
-                    if (songTable != null) {                    
-                        getFromWikiTable(movieUrl, songTable, fw);
-                    } else {
-                        getFromUnorderedList(movieUrl, soundtrackHeader, fw);
-                    }
+                
+                if (songTable != null) {
+                    finalSongs = extractFromWikiTable(movieUrl, songTable);
+                    sourceMethod = "WikiTable";
+                } else {
+                    finalSongs = extractFromUnorderedList(movieUrl, soundtrackHeader);
+                    sourceMethod = "Unordered List";
                 }
-            } else {
-                logger.debug("[WikiScraperService] No Soundtrack header found for {}", movieUrl);
             }
+            
+            // Check if extracted songs have complete data
+            if (!finalSongs.isEmpty() && !areAllSongsComplete(finalSongs)) {
+                logger.info("[WikiScraperService] Incomplete song data detected for {}. Using Gemini AI fallback...", movieUrl);
+                
+                // Extract the full soundtrack HTML for Gemini
+                String soundtrackHtml = soundtrackHeader != null ? 
+                    soundtrackHeader.parent().nextElementSiblings().html() : doc.html();
+                
+                // Call Gemini to extract songs
+                List<Map<String, String>> geminiSongs = geminiExtractor.extractSongsWithGemini(movieUrl, soundtrackHtml);
+                
+                if (!geminiSongs.isEmpty()) {
+                    finalSongs = geminiSongs;
+                    sourceMethod = "Gemini AI";
+                    logger.info("[WikiScraperService] Successfully extracted {} songs using Gemini AI for {}", 
+                        finalSongs.size(), movieUrl);
+                }
+            } else if (!finalSongs.isEmpty()) {
+                logger.info("[WikiScraperService] All song data is complete from Jsoup for {} ({})", movieUrl, sourceMethod);
+            }
+            
+            // Write final songs to CSV
+            writesongsToCSV(movieUrl, finalSongs, f, sourceMethod);
+            
         } catch (Exception e) {
             logger.error("[WikiScraperService] Error scraping {}: {}", movieUrl, e.getMessage());
         }
     }
 
-
-    private void getFromTrackListing(String movieUrl, File f, Element trackTable) throws IOException {
-        // 2. Find the table following this header
-         // We look at the parent of the span (the H3) and find the next table           
-         //trackHeader.closest("h3").nextElementSiblings().select("table.wikitable").first();
-        try (FileWriter fw = new FileWriter(f, true)) {
-            if (needHeader) {
-                fw.write("movieUrl,title,singers,composer,lyricists,length,source" + System.lineSeparator());
-                this.needHeader = false;
+    /**
+     * Check if all songs have complete data (no empty fields for key attributes).
+     */
+    private boolean areAllSongsComplete(List<Map<String, String>> songs) {
+        for (Map<String, String> song : songs) {
+            String title = song.getOrDefault("title", "").trim();
+            String singers = song.getOrDefault("singers", "").trim();
+            String composer = song.getOrDefault("composer", "").trim();
+            String lyricists = song.getOrDefault("lyricists", "").trim();
+            
+            // If ANY required field is empty or contains "not found" / "Could not find", data is incomplete
+            if (title.isEmpty() || title.contains("not found") || title.contains("Could not find") ||
+                singers.isEmpty() || singers.contains("not found") || singers.equals("Unknown") ||
+                composer.isEmpty() || composer.contains("not found") ||
+                lyricists.isEmpty() || lyricists.contains("not found")) {
+                return false;
             }
+        }
+        return true;
+    }
+
+    /**
+     * Extract songs from track listing table and return as list.
+     */
+    private List<Map<String, String>> extractFromTrackListing(String movieUrl, Element trackTable) {
+        List<Map<String, String>> songs = new ArrayList<>();
+        try {
             Elements rows = trackTable.select("tr");
-            // detect header row (<th>) to map column indices by header name
             boolean headerFound = false;
             int titleIdx = -1, lyricsIdx = -1, musicIdx = -1, singerIdx = -1, lengthIdx = -1;
 
@@ -160,151 +202,206 @@ public class WikiScraperService {
                     if (titleIdx >= 0 && titleIdx < cells.size()) 
                         title = cells.get(titleIdx).text().replaceAll("\"", "");
                     else 
-                        title = "Could not find title";
+                        title = "";
 
                     if (lyricsIdx >= 0 && lyricsIdx < cells.size()) 
                         lyrics = cells.get(lyricsIdx).text();
                     else
-                        lyrics = "Could not find lyrics";
+                        lyrics = "";
 
                     if (musicIdx >= 0 && musicIdx < cells.size()) 
                         music = cells.get(musicIdx).text();
                     else 
-                        music = "Could not find music composer";
+                        music = "";
 
                     if (singerIdx >= 0 && singerIdx < cells.size()) 
                         singers = cells.get(singerIdx).text();
                     else 
-                        singers = "Could not find singers";
+                        singers = "";
 
                     if (lengthIdx >= 0 && lengthIdx < cells.size()) 
                         length = cells.get(lengthIdx).text();
                     else 
-                        length = "Could not find length";
+                        length = "";
                 } else {
-                    // fallback to common index ordering when no header detected
-                    title = "Could not find title.186";
-                    lyrics = "Could not find lyrics.187";
-                    music = "Could not find music composer.188"; 
-                    singers = "Could not find singers.189";
-                    length = "Could not find length.190";   
+                    title = "";
+                    lyrics = "";
+                    music = "";
+                    singers = "";
+                    length = "";
                 }
 
-                logger.info("[WikiScraperService] Track Data - movieUrl: {}, title: {}, lyrics: {}, music: {}, singers: {}, length: {}", movieUrl, title, lyrics, music, singers, length);
+                logger.debug("[WikiScraperService] Track Data - movieUrl: {}, title: {}, lyrics: {}, music: {}, singers: {}, length: {}", 
+                    movieUrl, title, lyrics, music, singers, length);
 
-                String line = escapeCsv(movieUrl) + "," + escapeCsv(title) + "," + escapeCsv(singers) + "," + escapeCsv(music) + "," + escapeCsv(lyrics) + "," + escapeCsv(length) + "," + escapeCsv("Track Listing") + System.lineSeparator();
-                fw.write(line);
-                logger.debug("[WikiScraperService] Wrote CSV song entry (track table): {}", line.trim());
+                Map<String, String> song = new HashMap<>();
+                song.put("title", title);
+                song.put("singers", singers);
+                song.put("composer", music);
+                song.put("lyricists", lyrics);
+                song.put("length", length);
+                songs.add(song);
             }
+        } catch (Exception e) {
+            logger.error("[WikiScraperService] Error in extractFromTrackListing: {}", e.getMessage());
         }
+        return songs;
     }
 
+    /**
+     * Extract songs from wiki table and return as list.
+     */
+    private List<Map<String, String>> extractFromWikiTable(String movieUrl, Element songTable) {
+        List<Map<String, String>> songs = new ArrayList<>();
+        try {
+            Elements rows = songTable.select("tr");
+            boolean headerFound = false;
+            int titleIdx = -1, singerIdx = -1, lyricsIdx = -1, musicIdx = -1, lengthIdx = -1;
 
-    private void getFromUnorderedList(String movieUrl, Element soundtrackHeader, FileWriter fw) throws IOException {
-        Element songList = soundtrackHeader.parent().nextElementSiblings().select("ul").first();
-        if (songList != null) {
-            for (Element li : songList.select("li")) {
-                String text = li.text().replaceAll("\\[.*?\\]", "").trim();
-                String title = text;
-                String singers = "Unknown";
+            for (Element row : rows) {
+                Elements ths = row.select("th");
+                if (!ths.isEmpty() && !headerFound) {
+                    headerFound = true;
+                    for (int i = 0; i < ths.size(); i++) {
+                        String h = ths.get(i).text().trim().toLowerCase();
+                        if (h.contains("title") || h.contains("song") || h.contains("track")) 
+                            titleIdx = i;
+                        else if (h.contains("singer(s)") || h.contains("vocal") || h.contains("artist")) 
+                            singerIdx = i;
+                        else if (h.contains("lyrics") || h.contains("lyric")) 
+                            lyricsIdx = i;
+                        else if (h.contains("music") || h.contains("composer")) 
+                            musicIdx = i;
+                        else if (h.contains("length") || h.contains("time") || h.contains("duration")) 
+                            lengthIdx = i;
+                    }
+                    continue;
+                }
+
+                Elements cells = row.select("td");
+                if (cells.isEmpty()) continue;
+
+                String title = "";
+                String singers = "";
                 String music = "";
                 String lyrics = "";
                 String length = "";
 
-                // Heuristic splits: dash, slash, or ' by '
-                String[] parts = text.split("\\s*[–—-]\\s*|\\s*/\\s*|\\s+by\\s+");
-                if (parts.length >= 2) {
-                    title = parts[0].trim();
-                    singers = parts[1].trim();
-                } else {
-                    // fallback: try to find quoted title or italicized
-                    Element it = li.selectFirst("i");
-                    if (it != null) 
-                        title = it.text().trim();
+                if (headerFound) {
+                    if (titleIdx >= 0 && titleIdx < cells.size()) 
+                        title = cells.get(titleIdx).text().replaceAll("\\[.*?\\]", "");
                     else 
-                        title = "Could not find title.222";
+                        title = "";
+
+                    if (singerIdx >= 0 && singerIdx < cells.size()) singers = cells.get(singerIdx).text();
+                    else 
+                        singers = "";
+
+                    if (musicIdx >= 0 && musicIdx < cells.size()) music = cells.get(musicIdx).text();
+                    else 
+                        music = "";
+
+                    if (lyricsIdx >= 0 && lyricsIdx < cells.size()) lyrics = cells.get(lyricsIdx).text();
+                    else 
+                        lyrics = "";
+
+                    if (lengthIdx >= 0 && lengthIdx < cells.size()) length = cells.get(lengthIdx).text();
+                    else 
+                        length = "";
                 }
 
-                logger.info("[WikiScraperService] Unordered List Data - movieUrl: {}, title: {}, lyrics: {}, music: {}, singers: {}, length: {}", movieUrl, title, lyrics, music, singers, length);
+                logger.debug("[WikiScraperService] WikiTable Data - movieUrl: {}, title: {}, lyrics: {}, music: {}, singers: {}, length: {}", 
+                    movieUrl, title, lyrics, music, singers, length);
 
-                String line = escapeCsv(movieUrl) + "," + escapeCsv(title) + "," + escapeCsv(singers) + "," + escapeCsv(music) + "," + escapeCsv(lyrics) + "," + escapeCsv(length) + "," + escapeCsv("Unordered List") + System.lineSeparator();
-                fw.write(line);
-                logger.debug("[WikiScraperService] Wrote CSV song list entry: {}", line.trim());
+                Map<String, String> song = new HashMap<>();
+                song.put("title", title);
+                song.put("singers", singers);
+                song.put("composer", music);
+                song.put("lyricists", lyrics);
+                song.put("length", length);
+                songs.add(song);
             }
-        } else {
-            logger.debug("[WikiScraperService] No structured songs found for {}", movieUrl);
+        } catch (Exception e) {
+            logger.error("[WikiScraperService] Error in extractFromWikiTable: {}", e.getMessage());
         }
+        return songs;
     }
 
+    /**
+     * Extract songs from unordered list and return as list.
+     */
+    private List<Map<String, String>> extractFromUnorderedList(String movieUrl, Element soundtrackHeader) {
+        List<Map<String, String>> songs = new ArrayList<>();
+        try {
+            Element songList = soundtrackHeader.parent().nextElementSiblings().select("ul").first();
+            if (songList != null) {
+                for (Element li : songList.select("li")) {
+                    String text = li.text().replaceAll("\\[.*?\\]", "").trim();
+                    String title = text;
+                    String singers = "";
+                    String music = "";
+                    String lyrics = "";
+                    String length = "";
 
-    private void getFromWikiTable(String movieUrl, Element songTable, FileWriter fw) throws IOException {
-        Elements rows = songTable.select("tr");
-        boolean headerFound = false;
-        int titleIdx = -1, singerIdx = -1, lyricsIdx = -1, musicIdx = -1, lengthIdx = -1;
+                    // Heuristic splits: dash, slash, or ' by '
+                    String[] parts = text.split("\\s*[–—-]\\s*|\\s*/\\s*|\\s+by\\s+");
+                    if (parts.length >= 2) {
+                        title = parts[0].trim();
+                        singers = parts[1].trim();
+                    } else {
+                        // fallback: try to find italicized title
+                        Element it = li.selectFirst("i");
+                        if (it != null) 
+                            title = it.text().trim();
+                    }
 
-        for (Element row : rows) {
-            Elements ths = row.select("th");
-            if (!ths.isEmpty() && !headerFound) {
-                headerFound = true;
-                for (int i = 0; i < ths.size(); i++) {
-                    String h = ths.get(i).text().trim().toLowerCase();
-                    if (h.contains("title") || h.contains("song") || h.contains("track")) 
-                        titleIdx = i;
-                    else if (h.contains("singer(s)") || h.contains("vocal") || h.contains("artist")) 
-                        singerIdx = i;
-                    else if (h.contains("lyrics") || h.contains("lyric")) 
-                        lyricsIdx = i;
-                    else if (h.contains("music") || h.contains("composer")) 
-                        musicIdx = i;
-                    else if (h.contains("length") || h.contains("time") || h.contains("duration")) 
-                        lengthIdx = i;
+                    logger.debug("[WikiScraperService] Unordered List Data - movieUrl: {}, title: {}, singers: {}", 
+                        movieUrl, title, singers);
+
+                    Map<String, String> song = new HashMap<>();
+                    song.put("title", title);
+                    song.put("singers", singers);
+                    song.put("composer", music);
+                    song.put("lyricists", lyrics);
+                    song.put("length", length);
+                    songs.add(song);
                 }
-                continue;
             }
+        } catch (Exception e) {
+            logger.error("[WikiScraperService] Error in extractFromUnorderedList: {}", e.getMessage());
+        }
+        return songs;
+    }
 
-            Elements cells = row.select("td");
-            if (cells.isEmpty()) continue;
-
-            String title = "";
-            String singers = "Unknown";
-            String music = "";
-            String lyrics = "";
-            String length = "";
-
-            if (headerFound) {
-                if (titleIdx >= 0 && titleIdx < cells.size()) 
-                    title = cells.get(titleIdx).text().replaceAll("\\[.*?\\]", "");
-                else 
-                    title = "title not found";
-
-                if (singerIdx >= 0 && singerIdx < cells.size()) singers = cells.get(singerIdx).text();
-                else 
-                    singers = "singers not found";
-
-                if (musicIdx >= 0 && musicIdx < cells.size()) music = cells.get(musicIdx).text();
-                else 
-                    music = "music not found";
-
-                if (lyricsIdx >= 0 && lyricsIdx < cells.size()) lyrics = cells.get(lyricsIdx).text();
-                else 
-                    lyrics = "lyrics not found";
-
-                if (lengthIdx >= 0 && lengthIdx < cells.size()) length = cells.get(lengthIdx).text();
-                else 
-                    length = "length not found";
-            } else {
-                title = "title not found";
-                singers = "singers not found";
-                music = "music not found";
-                lyrics = "lyrics not found";
-                length = "length not found";
+    /**
+     * Write songs to CSV file.
+     */
+    private void writesongsToCSV(String movieUrl, List<Map<String, String>> songs, File f, String sourceMethod) throws IOException {
+        try (FileWriter fw = new FileWriter(f, true)) {
+            if (needHeader) {
+                fw.write("movieUrl,title,singers,composer,lyricists,length,source" + System.lineSeparator());
+                this.needHeader = false;
             }
-
-            logger.info("[WikiScraperService] WikiTable Data - movieUrl: {}, title: {}, lyrics: {}, music: {}, singers: {}, length: {}", movieUrl, title, lyrics, music, singers, length);
-
-            String line = escapeCsv(movieUrl) + "," + escapeCsv(title) + "," + escapeCsv(singers) + "," + escapeCsv(music) + "," + escapeCsv(lyrics) + "," + escapeCsv(length) + "," + escapeCsv("WikiTable") + System.lineSeparator();
-            fw.write(line);
-            logger.debug("[WikiScraperService] Wrote CSV song entry: {}", line.trim());
+            
+            for (Map<String, String> song : songs) {
+                String title = song.getOrDefault("title", "");
+                String singers = song.getOrDefault("singers", "");
+                String composer = song.getOrDefault("composer", "");
+                String lyricists = song.getOrDefault("lyricists", "");
+                String length = song.getOrDefault("length", "");
+                
+                String line = escapeCsv(movieUrl) + "," + 
+                             escapeCsv(title) + "," + 
+                             escapeCsv(singers) + "," + 
+                             escapeCsv(composer) + "," + 
+                             escapeCsv(lyricists) + "," + 
+                             escapeCsv(length) + "," + 
+                             escapeCsv(sourceMethod) + System.lineSeparator();
+                fw.write(line);
+                logger.debug("[WikiScraperService] Wrote CSV song entry: {}", line.trim());
+            }
+            
+            logger.info("[WikiScraperService] Successfully wrote {} songs to CSV for {}", songs.size(), movieUrl);
         }
     }
 
