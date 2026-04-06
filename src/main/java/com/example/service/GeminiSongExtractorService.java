@@ -109,6 +109,7 @@ public class GeminiSongExtractorService {
             throw new Exception("Gemini API error: " + response.statusCode());
         }
         
+        logger.info("[GeminiSongExtractorService] Gemini response body: {}", response.body());
         return response.body();
     }
 

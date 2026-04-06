@@ -117,7 +117,8 @@ public class WikiScraperService {
                     soundtrackHeader.parent().nextElementSiblings().html() : doc.html();
                 
                 // Call Gemini to extract songs
-                List<Map<String, String>> geminiSongs = geminiExtractor.extractSongsWithGemini(movieUrl, soundtrackHtml);
+                List<Map<String, String>> geminiSongs = geminiExtractor.extractSongsWithGemini(
+                    movieUrl, soundtrackHtml);
                 
                 if (!geminiSongs.isEmpty()) {
                     finalSongs = geminiSongs;
