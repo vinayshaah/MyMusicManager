@@ -73,6 +73,7 @@ public class WikiScraperService {
      * @param movieUrl  
      */
     public void scrapeSongsFromMovie(String movieUrl) {
+        logger.info("[WikiScraperService] scrapeSongsFromMovie starts with movieUrl: {}", movieUrl);
         String outputFile = "C:\\Users\\Vinay Kumar\\Documents\\VinayOraDocs\\Non-Technical Stuffs\\Other Resources\\HelloWorld\\movie_songs.csv";
         try {
             // ensure parent dir exists
@@ -85,14 +86,20 @@ public class WikiScraperService {
             
             // 1. Locate the Soundtrack section in the Wikipedia page
             Element soundtrackHeader = getSoundtrackHeader(doc);
-            Element trackHeader = retrieveTrackHeader(doc);
-            Element trackTable = doc.select("table.tracklist").first();
+            
+            // 2. Resolve the document to use (follow Main article link if present)
+            Document workingDoc = resolveSoundtrackDocument(doc, soundtrackHeader);
+            
+            // 3. Re-locate headers in the working document
+            soundtrackHeader = getSoundtrackHeader(workingDoc);
+            Element trackHeader = retrieveTrackHeader(workingDoc);
+            Element trackTable = workingDoc.select("table.tracklist").first();
             
             List<Map<String, String>> finalSongs = new ArrayList<>();
             String sourceMethod = "None";
             
             // Try to extract songs using Jsoup
-            if (trackTable != null && soundtrackHeader != null) {
+            if (trackTable != null && (soundtrackHeader != null || trackHeader != null)) {
                 finalSongs = extractFromTrackListing(movieUrl, trackTable);
                 sourceMethod = "Track Listing";
             } else if (soundtrackHeader != null) {
@@ -110,21 +117,23 @@ public class WikiScraperService {
             
             // Check if extracted songs have complete data
             if (!finalSongs.isEmpty() && !areAllSongsComplete(finalSongs)) {
-                logger.info("[WikiScraperService] Incomplete song data detected for {}. Using Gemini AI fallback...", movieUrl);
+                logger.info("[WikiScraperService] Incomplete song data detected for {}. Using Gemini AI to enrich missing fields...", movieUrl);
                 
-                // Extract the full soundtrack HTML for Gemini
-                String soundtrackHtml = soundtrackHeader != null ? 
-                    soundtrackHeader.parent().nextElementSiblings().html() : doc.html();
-                
-                // Call Gemini to extract songs
-                List<Map<String, String>> geminiSongs = geminiExtractor.extractSongsWithGemini(
-                    movieUrl, soundtrackHtml);
-                
-                if (!geminiSongs.isEmpty()) {
-                    finalSongs = geminiSongs;
-                    sourceMethod = "Gemini AI";
-                    logger.info("[WikiScraperService] Successfully extracted {} songs using Gemini AI for {}", 
-                        finalSongs.size(), movieUrl);
+                Element headerForHtml = soundtrackHeader != null ? soundtrackHeader : trackHeader;
+                String soundtrackHtml = headerForHtml != null ? extractSoundtrackSectionHtml(headerForHtml) : "";
+                if (!soundtrackHtml.isBlank()) {
+                    // Pass incomplete songs to Gemini for enrichment (not replacement)
+                    List<Map<String, String>> enrichedSongs = geminiExtractor.extractSongsWithGemini(
+                        movieUrl, soundtrackHtml, finalSongs);
+                    
+                    if (!enrichedSongs.isEmpty()) {
+                        finalSongs = enrichedSongs;
+                        sourceMethod = "Jsoup + Gemini AI";
+                        logger.info("[WikiScraperService] Successfully enriched {} songs using Gemini AI for {}", 
+                            finalSongs.size(), movieUrl);
+                    }
+                } else {
+                    logger.warn("[WikiScraperService] Gemini enrichment skipped for {} because soundtrack HTML could not be extracted.", movieUrl);
                 }
             } else if (!finalSongs.isEmpty()) {
                 logger.info("[WikiScraperService] All song data is complete from Jsoup for {} ({})", movieUrl, sourceMethod);
@@ -136,12 +145,38 @@ public class WikiScraperService {
         } catch (Exception e) {
             logger.error("[WikiScraperService] Error scraping {}: {}", movieUrl, e.getMessage());
         }
+        logger.info("[WikiScraperService] scrapeSongsFromMovie ends");
     }
 
     /**
      * Check if all songs have complete data (no empty fields for key attributes).
      */
+    private String extractSoundtrackSectionHtml(Element soundtrackHeader) {
+        logger.info("[WikiScraperService] extractSoundtrackSectionHtml starts with soundtrackHeader present: {}", soundtrackHeader != null);
+        Element sectionRoot = soundtrackHeader;
+        //if ("span".equalsIgnoreCase(soundtrackHeader.tagName())) {
+            sectionRoot = soundtrackHeader.parent();
+        //}
+
+        StringBuilder htmlBuilder = new StringBuilder();
+        for (Element sibling : sectionRoot.nextElementSiblings()) {
+            String tagName = sibling.tagName();
+            if (tagName.matches("h2|h3|h4|h5|h6")) {
+                break;
+            }
+            htmlBuilder.append(sibling.outerHtml());
+            if (htmlBuilder.length() > 38000) {
+                htmlBuilder.setLength(38000);
+                htmlBuilder.append("\n<!-- truncated for Gemini request size -->");
+                break;
+            }
+        }
+        logger.info("[WikiScraperService] extractSoundtrackSectionHtml ends");
+        return htmlBuilder.toString();
+    }
+
     private boolean areAllSongsComplete(List<Map<String, String>> songs) {
+        logger.info("[WikiScraperService] areAllSongsComplete starts with songs size: {}", songs.size());
         for (Map<String, String> song : songs) {
             String title = song.getOrDefault("title", "").trim();
             String singers = song.getOrDefault("singers", "").trim();
@@ -156,6 +191,7 @@ public class WikiScraperService {
                 return false;
             }
         }
+        logger.info("[WikiScraperService] areAllSongsComplete ends");
         return true;
     }
 
@@ -163,6 +199,7 @@ public class WikiScraperService {
      * Extract songs from track listing table and return as list.
      */
     private List<Map<String, String>> extractFromTrackListing(String movieUrl, Element trackTable) {
+        logger.info("[WikiScraperService] extractFromTrackListing starts with movieUrl: {}, trackTable present: {}", movieUrl, trackTable != null);
         List<Map<String, String>> songs = new ArrayList<>();
         try {
             Elements rows = trackTable.select("tr");
@@ -246,6 +283,7 @@ public class WikiScraperService {
         } catch (Exception e) {
             logger.error("[WikiScraperService] Error in extractFromTrackListing: {}", e.getMessage());
         }
+        logger.info("[WikiScraperService] extractFromTrackListing ends");
         return songs;
     }
 
@@ -253,6 +291,7 @@ public class WikiScraperService {
      * Extract songs from wiki table and return as list.
      */
     private List<Map<String, String>> extractFromWikiTable(String movieUrl, Element songTable) {
+        logger.info("[WikiScraperService] extractFromWikiTable starts with movieUrl: {}, songTable present: {}", movieUrl, songTable != null);
         List<Map<String, String>> songs = new ArrayList<>();
         try {
             Elements rows = songTable.select("tr");
@@ -325,6 +364,7 @@ public class WikiScraperService {
         } catch (Exception e) {
             logger.error("[WikiScraperService] Error in extractFromWikiTable: {}", e.getMessage());
         }
+        logger.info("[WikiScraperService] extractFromWikiTable ends");
         return songs;
     }
 
@@ -332,6 +372,7 @@ public class WikiScraperService {
      * Extract songs from unordered list and return as list.
      */
     private List<Map<String, String>> extractFromUnorderedList(String movieUrl, Element soundtrackHeader) {
+        logger.info("[WikiScraperService] extractFromUnorderedList starts with movieUrl: {}, soundtrackHeader present: {}", movieUrl, soundtrackHeader != null);
         List<Map<String, String>> songs = new ArrayList<>();
         try {
             Element songList = soundtrackHeader.parent().nextElementSiblings().select("ul").first();
@@ -371,6 +412,7 @@ public class WikiScraperService {
         } catch (Exception e) {
             logger.error("[WikiScraperService] Error in extractFromUnorderedList: {}", e.getMessage());
         }
+        logger.info("[WikiScraperService] extractFromUnorderedList ends");
         return songs;
     }
 
@@ -378,6 +420,7 @@ public class WikiScraperService {
      * Write songs to CSV file.
      */
     private void writesongsToCSV(String movieUrl, List<Map<String, String>> songs, File f, String sourceMethod) throws IOException {
+        logger.info("[WikiScraperService] writesongsToCSV starts with movieUrl: {}, songs size: {}, sourceMethod: {}", movieUrl, songs.size(), sourceMethod);
         try (FileWriter fw = new FileWriter(f, true)) {
             if (needHeader) {
                 fw.write("movieUrl,title,singers,composer,lyricists,length,source" + System.lineSeparator());
@@ -404,30 +447,78 @@ public class WikiScraperService {
             
             logger.info("[WikiScraperService] Successfully wrote {} songs to CSV for {}", songs.size(), movieUrl);
         }
+        logger.info("[WikiScraperService] writesongsToCSV ends");
     }
 
 
     private Element getSoundtrackHeader(Document doc) {
+        logger.info("[WikiScraperService] getSoundtrackHeader starts with doc title: {}", doc.title());
         // 1. Find the Soundtrack section by its ID (standard Wiki format)
         Element soundtrackHeader = doc.getElementById("Soundtrack");
 
-        // 2. If no ID, search for a heading containing the word "Soundtrack"
+        // 2. If no ID, check for Music ID
         if (soundtrackHeader == null) {
-            soundtrackHeader = doc.select("h2:contains(Soundtrack), h3:contains(Soundtrack)").first();
+            soundtrackHeader = doc.getElementById("Music");
         }
+
+        // 3. If no ID, search for a heading containing the word "Soundtrack" or "Music"
+        if (soundtrackHeader == null) {
+            soundtrackHeader = doc.select("h2:contains(Soundtrack), h3:contains(Soundtrack), h2:contains(Music), h3:contains(Music)").first();
+        }
+        logger.info("[WikiScraperService] getSoundtrackHeader ends. soundtrackHeader: {}", soundtrackHeader);
         return soundtrackHeader;
     }
 
     private Element retrieveTrackHeader(Document doc) {
+        logger.info("[WikiScraperService] retrieveTrackHeader starts with doc title: {}", doc.title());
         // TODO Auto-generated method stub
         // 1. Target the 'Track listing' sub-heading specifically
         Element trackHeader = doc.select("span#Track_listing").first();
         
-        // If the ID isn't there, look for any H3 containing 'Track listing'
+        // If the ID isn't there, look for any H2 or H3 containing 'Track listing'
         if (trackHeader == null) {
-            trackHeader = doc.select("h3:contains(Track listing)").first();
+            trackHeader = doc.select("h2:contains(Track listing), h3:contains(Track listing)").first();
         }
+        logger.info("[WikiScraperService] retrieveTrackHeader ends");
         return trackHeader;
+    }
+
+    /**
+     * Resolve the document to use for soundtrack extraction.
+     * If a "Main article" link is found in a div.hatnote.navigation-not-searchable sibling, fetch that page.
+     * Otherwise, use the original movie document.
+     */
+    private Document resolveSoundtrackDocument(Document movieDoc, Element soundtrackHeader) throws IOException {
+        logger.info("[WikiScraperService] resolveSoundtrackDocument starts with movieDoc title: {}, soundtrackHeader present: {}", movieDoc.title(), soundtrackHeader != null);
+        if (soundtrackHeader != null) {
+            // Get the parent container of the soundtrack header (e.g., div.mw-heading)
+            Element headerContainer = soundtrackHeader.parent();
+            
+            if (headerContainer != null) {
+                // Iterate through siblings of the header container to find the hatnote div
+                Element sibling = headerContainer.nextElementSibling();
+                while (sibling != null) {
+                    // Check if this sibling is a hatnote div with "Main article" text
+                    if ("div".equals(sibling.tagName()) && sibling.hasClass("hatnote") && sibling.hasClass("navigation-not-searchable")) {
+                        if (sibling.text().contains("Main article")) {
+                            Element mainArticleLink = sibling.selectFirst("a");
+                            if (mainArticleLink != null) {
+                                String href = mainArticleLink.attr("href");
+                                if (href.startsWith("/wiki/")) {
+                                    String fullUrl = "https://en.wikipedia.org" + href;
+                                    logger.info("[WikiScraperService] Following Main article link to separate soundtrack page: {}", fullUrl);
+                                    return Jsoup.connect(fullUrl).userAgent("Mozilla/5.0").get();
+                                }
+                            }
+                            break; // Stop after finding the first hatnote with "Main article"
+                        }
+                    }
+                    sibling = sibling.nextElementSibling();
+                }
+            }
+        }
+        logger.info("[WikiScraperService] resolveSoundtrackDocument ends");
+        return movieDoc; // Default to original document
     }
 
 
