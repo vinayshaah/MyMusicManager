@@ -25,6 +25,8 @@ public class WikiScraperService {
 
     @Autowired
     private GeminiSongExtractorService geminiExtractor;
+    @Autowired
+    private MusicProducerService musicProducerService;
 
     public List<Map<String, String>> scrapeMovies(String url) {
         List<Map<String, String>> movies = new ArrayList<>();
@@ -44,7 +46,9 @@ public class WikiScraperService {
 
                         logger.info("[WikiScraperService] Found movie: {} -> {}", movieTitle, fullUrl);
                         scrapeSongsFromMovie(fullUrl);
-                        
+                        //push movie URL to RabbitMQ for further processing (e.g., by a Gemini-based service)   
+                        musicProducerService.queueMovieUrl(fullUrl);
+
                         // Polite delay to avoid Wikipedia rate limits
                         try {
                             Thread.sleep(500);
