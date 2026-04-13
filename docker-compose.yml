@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: music-mq
+    ports:
+      - "5672:5672"   # MQ Port
+      - "15672:15672" # Management UI (Login: guest/guest)
+    networks:
+      - music-network
+
+  # Cache for deduplication
+  redis:
+    image: redis:alpine
+    container_name: music-cache
+    ports:
+      - "6379:6379"
+    networks:
+      - music-network
+
+  # Database with Vector support
+  postgres:
+    image: ankane/pgvector
+    container_name: music-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: music_manager
+    ports:
+      - "5432:5432"
+    networks:
+      - music-network
+
+networks:
+  music-network:
+    driver: bridge
