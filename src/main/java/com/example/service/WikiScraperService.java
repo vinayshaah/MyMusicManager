@@ -28,6 +28,11 @@ public class WikiScraperService {
     @Autowired
     private MusicProducerService musicProducerService;
 
+    /**
+     * Scrape movie information from a Wikipedia page.
+     * @param url The  wikipedia page for the entire year, e.g. https://en.wikipedia.org/wiki/List_of_Hindi_films_of_2020
+     * @return A list of maps containing movie information.
+     */
     public List<Map<String, String>> scrapeMovies(String url) {
         List<Map<String, String>> movies = new ArrayList<>();
         try {
@@ -45,7 +50,7 @@ public class WikiScraperService {
                         String fullUrl = "https://en.wikipedia.org" + relativeUrl;
 
                         logger.info("[WikiScraperService] Found movie: {} -> {}", movieTitle, fullUrl);
-                        scrapeSongsFromMovie(fullUrl);
+                        //scrapeSongsFromMovie(fullUrl);
                         //push movie URL to RabbitMQ for further processing (e.g., by a Gemini-based service)   
                         musicProducerService.queueMovieUrl(fullUrl);
 
@@ -76,9 +81,10 @@ public class WikiScraperService {
      * Uses Jsoup for initial extraction, falls back to Gemini AI if any song data is incomplete.
      * @param movieUrl  
      */
-    public void scrapeSongsFromMovie(String movieUrl) {
+    public List<Map<String, String>> scrapeSongsFromMovie(String movieUrl) {
         logger.info("[WikiScraperService] scrapeSongsFromMovie starts with movieUrl: {}", movieUrl);
         String outputFile = "C:\\Users\\Vinay Kumar\\Documents\\VinayOraDocs\\Non-Technical Stuffs\\Other Resources\\HelloWorld\\movie_songs.csv";
+        List<Map<String, String>> finalSongs = new ArrayList<>();
         try {
             // ensure parent dir exists
             File f = new File(outputFile);
@@ -99,7 +105,6 @@ public class WikiScraperService {
             Element trackHeader = retrieveTrackHeader(workingDoc);
             Element trackTable = workingDoc.select("table.tracklist").first();
             
-            List<Map<String, String>> finalSongs = new ArrayList<>();
             String sourceMethod = "None";
             
             // Try to extract songs using Jsoup
@@ -145,11 +150,13 @@ public class WikiScraperService {
             
             // Write final songs to CSV
             writesongsToCSV(movieUrl, finalSongs, f, sourceMethod);
-            
+            logger.info("[WikiScraperService] scrapeSongsFromMovie ends");
+            return finalSongs;    
         } catch (Exception e) {
             logger.error("[WikiScraperService] Error scraping {}: {}", movieUrl, e.getMessage());
-        }
-        logger.info("[WikiScraperService] scrapeSongsFromMovie ends");
+            throw new RuntimeException(e);
+        }         
+
     }
 
     /**

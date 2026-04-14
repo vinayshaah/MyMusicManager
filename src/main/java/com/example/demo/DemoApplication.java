@@ -2,6 +2,7 @@ package com.example.demo;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -12,6 +13,7 @@ import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 import java.io.FileWriter;
 import java.io.IOException;
@@ -26,6 +28,8 @@ import com.example.service.WikiScraperService;
 
 @SpringBootApplication
 @ComponentScan("com.example")
+@EnableJpaRepositories(basePackages = "com.example.repo")
+@EntityScan("com.example.entity")
 @RestController
 public class DemoApplication {
 

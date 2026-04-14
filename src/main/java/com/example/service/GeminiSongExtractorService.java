@@ -67,6 +67,7 @@ public class GeminiSongExtractorService {
             
         } catch (Exception e) {
             logger.error("[GeminiSongExtractorService] Error enriching songs from {}: {}", movieUrl, e.getMessage());
+            enrichedSongs = incompleteSongs; // Fallback to original incomplete songs if Gemini fails   
         }
         
         return enrichedSongs;
@@ -75,7 +76,7 @@ public class GeminiSongExtractorService {
     /**
      * Build the request body for Gemini API.
      */
-    private JsonObject buildRequestBody(String promptText) {
+    public JsonObject buildRequestBody(String promptText) {
         JsonObject requestBody = new JsonObject();
 
         // 1. Create the 'parts' array and add the text object
@@ -124,9 +125,8 @@ public class GeminiSongExtractorService {
     /**
      * Call the Gemini API using HTTP client.
      */
-    private String callGeminiAPI(JsonObject requestBody) throws Exception {
-        String url = GEMINI_API_URL + "?key=" + apiKey;
-        
+    public String callGeminiAPI(JsonObject requestBody) throws Exception {
+        String url = GEMINI_API_URL + "?key=" + apiKey;     
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("Content-Type", "application/json")
@@ -134,7 +134,7 @@ public class GeminiSongExtractorService {
                 .build();
         
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        
+
         if (response.statusCode() != 200) {
             logger.error("[GeminiSongExtractorService] Gemini API returned status code: {}", response.statusCode());
             logger.error("[GeminiSongExtractorService] Response body: {}", response.body());
@@ -340,5 +340,10 @@ public class GeminiSongExtractorService {
             return obj.get(key).getAsString().trim();
         }
         return "";
+    }
+
+    public double[] getEmbedding(String thematicSummary) {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'getEmbedding'");
     }
 }
