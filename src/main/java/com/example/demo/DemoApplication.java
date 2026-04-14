@@ -1,5 +1,6 @@
 package com.example.demo;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
@@ -14,15 +15,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.http.ResponseEntity;
 
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.HashMap;
+
+import com.example.dto.MusicSongDTO;
+import com.example.entity.MusicSong;
+import com.example.repo.MusicRepository;
+import com.example.service.MockGeminiService;
+import com.example.service.SemanticSearchService;
 import com.example.service.WikiScraperService;
 
 
@@ -36,6 +46,15 @@ public class DemoApplication {
     private static final Logger logger = LoggerFactory.getLogger(DemoApplication.class);
 
     private final WikiScraperService wikiScraperService;
+
+    @Autowired
+    private MusicRepository musicRepository;
+
+    @Autowired
+    private MockGeminiService geminiService;
+
+    @Autowired
+    private SemanticSearchService semanticSearchService;
 
     public DemoApplication(WikiScraperService wikiScraperService) {
         this.wikiScraperService = wikiScraperService;
@@ -70,9 +89,27 @@ public class DemoApplication {
         return response;
     }
 
+@GetMapping("/search")
+public ResponseEntity<List<MusicSongDTO>> semanticSearch(@RequestParam String query) {
+    System.out.println("Inside semantic search with query: " + query);
+    // 1. Convert user's search text into a vector (using the mock service)
+    double[] queryVector = geminiService.getEmbedding(query);
     
-
-
+    // Manual formatting to ensure NO spaces and clean brackets
+    // Format your double[] as "[0.123, 0.456, ...]" before passing
+    String vectorString = "[" + Arrays.stream(queryVector)
+            .mapToObj(Double::toString)
+            .collect(Collectors.joining(",")) + "]";
+    System.out.println("Query vector string: " + vectorString);
+    // 3. Query the database for the 5 most similar songs
+    List<MusicSong> results = musicRepository.findTop5SemanticMatches(vectorString);
+    System.out.println("Songs obtained: " + results);
+    // convert to DTO
+    List<MusicSongDTO> dtoResult = results.stream()
+            .map(MusicSongDTO::new)
+            .collect(Collectors.toList());
+    return ResponseEntity.ok(dtoResult);
+}    
 
     private void performScan(String year) throws IOException {
         logger.info("[performScan] Starting scan for year: {}", year);

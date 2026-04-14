@@ -16,4 +16,10 @@ public interface MusicRepository extends JpaRepository<MusicSong, Long> {
                    "LIMIT :limit", nativeQuery = true)
     List<MusicSong> findSimilarSongs(@Param("queryVector") String queryVector, 
                                      @Param("limit") int limit);
+
+    @Query(value = "SELECT id,song_title,movie_name,year,singers,lyricists,composer,semantic_summary,embedding FROM music_catalog " +
+               "ORDER BY embedding <=> cast(:queryVector as vector) " +
+               "LIMIT 5",
+                nativeQuery = true)
+    List<MusicSong> findTop5SemanticMatches(@Param("queryVector") String queryVector);
 }

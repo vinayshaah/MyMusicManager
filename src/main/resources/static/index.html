@@ -11,6 +11,14 @@
   <input id="textInput" type="text" placeholder="Type something...">
   <button id="sendBtn">Send</button>
   <hr>
+   <div class="search-container" style="margin-top: 30px; padding: 20px; border: 1px solid #ccc;">
+    <h3>Search by Meaning (Semantic Search)</h3>
+    <input type="text" id="searchInput" placeholder="e.g., A sad song about rain and nostalgia..." style="width: 70%; padding: 10px;">
+    <button onclick="performSearch()" style="padding: 10px 20px; cursor: pointer;">Search</button>
+
+    <div id="results" style="margin-top: 20px;">
+        </div>
+</div>
   <h2>Scan Hindi films by year</h2>
   <input id="yearInput" type="text" placeholder="Enter year (e.g. 2020)">
   <button id="scanBtn">Scan</button>
@@ -20,6 +28,37 @@
     <ul id="movies" style="list-style-type:none; padding:0;"></ul>
   </div>
   <div id="result" style="margin-top:1rem; font-weight:bold;"></div>
+
+<script>
+function performSearch() {
+    const query = document.getElementById('searchInput').value;
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = "Searching the depths of history...";
+
+    fetch(`/search?query=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(data => {
+            resultsDiv.innerHTML = "";
+            if (data.length === 0) {
+                resultsDiv.innerHTML = "No matches found.";
+                return;
+            }
+            data.forEach(song => {
+                const songEl = document.createElement('div');
+                songEl.style.borderBottom = "1px dotted #888";
+                songEl.style.padding = "10px 0";
+                songEl.innerHTML = `
+                    <strong>${song.songTitle}</strong> from <em>${song.movieName}</em> (${song.releaseYear})<br>
+                    <small style="color: #666;">Theme: ${song.semanticSummary}</small>
+                `;
+                resultsDiv.appendChild(songEl);
+            });
+        })
+        .catch(err => {
+            resultsDiv.innerHTML = "Error: " + err;
+        });
+}
+</script>
 
   <script>
     const btn = document.getElementById('sendBtn');
