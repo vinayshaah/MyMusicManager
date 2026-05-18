@@ -14,6 +14,7 @@ import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.ImportResource;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.http.ResponseEntity;
 
@@ -37,6 +38,7 @@ import com.example.service.WikiScraperService;
 
 
 @SpringBootApplication
+//@ImportResource("classpath:beans.xml")
 @ComponentScan("com.example")
 @EnableJpaRepositories(basePackages = "com.example.repo")
 @EntityScan("com.example.entity")

@@ -83,7 +83,7 @@ public class WikiScraperService {
      */
     public List<Map<String, String>> scrapeSongsFromMovie(String movieUrl) {
         logger.info("[WikiScraperService] scrapeSongsFromMovie starts with movieUrl: {}", movieUrl);
-        String outputFile = "C:\\Users\\Vinay Kumar\\Documents\\VinayOraDocs\\Non-Technical Stuffs\\Other Resources\\HelloWorld\\movie_songs.csv";
+        String outputFile = "C:\\Users\\kamnanuj\\Desktop\\Vinay\\ExitBackup\\SourceCodes\\MyMusicManager\\src\\main\\resources\\movie_songs.csv";
         List<Map<String, String>> finalSongs = new ArrayList<>();
         try {
             // ensure parent dir exists

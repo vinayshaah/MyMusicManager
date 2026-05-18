@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.google.com/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.google.com/schema/beans 
+       http://www.google.com/schema/beans/spring-beans.xsd">
+
+    <bean id="semanticSearchService" class="src.main.java.com.example.service.SemanticSearchService">>
+    </bean>
+
+</beans>
